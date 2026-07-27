@@ -1,0 +1,76 @@
+services:
+  rustfs-perms:
+    image: alpine:3.22
+    user: root
+    volumes:
+      - rustfs-data:/data
+    command: ["sh", "-c", "chown -R 10001:10001 /data"]
+
+  rustfs:
+    image: ${RUSTFS_IMAGE:-rustfs/rustfs:latest}
+    depends_on:
+      rustfs-perms:
+        condition: service_completed_successfully
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-ducklake_access}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-ducklake_secret}
+      RUSTFS_ADDRESS: :9000
+      RUSTFS_CONSOLE_ENABLE: "true"
+    ports:
+      - "${RUSTFS_API_PORT:-9000}:9000"
+      - "${RUSTFS_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - rustfs-data:/data
+
+  bucket-init:
+    image: ${AWS_CLI_IMAGE:-amazon/aws-cli:2.36.8}
+    depends_on:
+      rustfs:
+        condition: service_started
+    environment:
+      AWS_ACCESS_KEY_ID: ${RUSTFS_ACCESS_KEY:-ducklake_access}
+      AWS_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY:-ducklake_secret}
+      AWS_DEFAULT_REGION: ${RUSTFS_REGION:-us-east-1}
+      AWS_EC2_METADATA_DISABLED: "true"
+      LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET:-lakehouse}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        endpoint=http://rustfs:9000
+        until aws --endpoint-url "$${endpoint}" s3api list-buckets >/dev/null 2>&1; do
+          echo "waiting for RustFS..."
+          sleep 2
+        done
+        if ! aws --endpoint-url "$${endpoint}" s3api head-bucket --bucket "$${LAKEHOUSE_BUCKET}" >/dev/null 2>&1; then
+          aws --endpoint-url "$${endpoint}" s3api create-bucket --bucket "$${LAKEHOUSE_BUCKET}" >/dev/null || \
+            aws --endpoint-url "$${endpoint}" s3api head-bucket --bucket "$${LAKEHOUSE_BUCKET}" >/dev/null
+        fi
+        echo "bucket ready: $${LAKEHOUSE_BUCKET}"
+
+  duckdb-server:
+    build:
+      context: ./docker/duckdb
+      args:
+        DUCKDB_IMAGE: ${DUCKDB_IMAGE:-duckdb/duckdb:1.5.3}
+    depends_on:
+      bucket-init:
+        condition: service_completed_successfully
+    entrypoint: ["/usr/local/bin/server-entrypoint"]
+    environment:
+      DUCKDB_CATALOG_PATH: /catalog/db.duckdb
+      DUCKLAKE_DATA_PATH: s3://${LAKEHOUSE_BUCKET:-lakehouse}/data/
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-ducklake_access}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-ducklake_secret}
+      RUSTFS_REGION: ${RUSTFS_REGION:-us-east-1}
+      RUSTFS_ENDPOINT: ${RUSTFS_ENDPOINT:-rustfs:9000}
+      QUACK_TOKEN: ${QUACK_TOKEN:-local-quack-token}
+    ports:
+      - "${QUACK_PORT:-9494}:9494"
+    volumes:
+      - duckdb-catalog:/catalog
+
+volumes:
+  rustfs-data:
+  duckdb-catalog:

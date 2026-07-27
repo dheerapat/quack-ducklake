@@ -1,0 +1,75 @@
+#!/bin/sh
+set -eu
+
+: "${DUCKDB_CATALOG_PATH:?DUCKDB_CATALOG_PATH is required}"
+: "${DUCKLAKE_DATA_PATH:?DUCKLAKE_DATA_PATH is required}"
+: "${RUSTFS_ACCESS_KEY:?RUSTFS_ACCESS_KEY is required}"
+: "${RUSTFS_SECRET_KEY:?RUSTFS_SECRET_KEY is required}"
+: "${QUACK_TOKEN:?QUACK_TOKEN is required}"
+
+case "$QUACK_TOKEN" in
+  *"'"*|*"\""*|*\\*) echo 'QUACK_TOKEN contains an unsupported quote or slash' >&2; exit 1 ;;
+esac
+case "$RUSTFS_ACCESS_KEY$RUSTFS_SECRET_KEY" in
+  *"'"*|*"\""*|*\\*) echo 'RustFS credentials contain an unsupported quote or slash' >&2; exit 1 ;;
+esac
+if printf '%s' "$QUACK_TOKEN$RUSTFS_ACCESS_KEY$RUSTFS_SECRET_KEY" | LC_ALL=C grep -q '[^ -~]'; then
+  echo 'Quack token and RustFS credentials must contain printable ASCII characters' >&2
+  exit 1
+fi
+
+if [ "${#QUACK_TOKEN}" -lt 4 ]; then
+  echo 'QUACK_TOKEN must contain at least four characters' >&2
+  exit 1
+fi
+
+sql_file=$(mktemp)
+input_pipe=$(mktemp -u)
+mkfifo "$input_pipe"
+keepalive_pid=''
+cleanup() {
+  [ -z "$keepalive_pid" ] || kill "$keepalive_pid" 2>/dev/null || true
+  rm -f "$sql_file" "$input_pipe"
+}
+trap cleanup EXIT INT TERM
+
+cat >"$sql_file" <<SQL
+INSTALL httpfs;
+INSTALL ducklake;
+INSTALL quack;
+LOAD httpfs;
+LOAD ducklake;
+LOAD quack;
+
+CREATE OR REPLACE SECRET rustfs_s3 (
+  TYPE s3,
+  PROVIDER config,
+  KEY_ID '${RUSTFS_ACCESS_KEY}',
+  SECRET '${RUSTFS_SECRET_KEY}',
+  REGION '${RUSTFS_REGION:-us-east-1}',
+  ENDPOINT '${RUSTFS_ENDPOINT:-rustfs:9000}',
+  URL_STYLE 'path',
+  USE_SSL false
+);
+
+ATTACH 'ducklake:${DUCKDB_CATALOG_PATH}' AS lake (
+  DATA_PATH '${DUCKLAKE_DATA_PATH}',
+  DATA_INLINING_ROW_LIMIT 0
+);
+USE lake;
+
+CALL quack_serve(
+  'quack:0.0.0.0:9494',
+  token => '${QUACK_TOKEN}',
+  allow_other_hostname => true,
+  disable_ssl => true
+);
+
+SELECT 'DuckDB Quack server ready' AS status;
+SQL
+
+# Keep the DuckDB session alive after bootstrap. The attached catalog and Quack
+# listener belong to this one process; no other process opens db.duckdb.
+tail -f /dev/null >"$input_pipe" &
+keepalive_pid=$!
+duckdb :memory: -init "$sql_file" <"$input_pipe"
