@@ -1,7 +1,8 @@
-# Quack Ducklake Demo
+# Ducan
 
 ```text
-DuckDB client --Quack/HTTP--> DuckDB server --DuckLake/S3--> RustFS
+DuckDB client --Quack/HTTP--> DuckDB server --DuckLake/S3--> S3-compatible storage
+                                      (RustFS locally; external S3 in production)
                                   |
                                   +-- /catalog/db.duckdb
 ```
@@ -10,9 +11,20 @@ The client never mounts the catalog or RustFS data. Only the single `duckdb-serv
 
 ## Start
 
+Requires Docker Compose and [uv](https://docs.astral.sh/uv/).
+
+```bash
+uv run bin/ducan init
+uv run bin/ducan up
+uv run bin/ducan status
+```
+
+`ducan init` creates `.env` with local secrets. Review it before starting. The API is available at `http://127.0.0.1:8080`.
+
+For direct Compose usage:
+
 ```bash
 cp .env.example .env
-# Change RUSTFS_SECRET_KEY and QUACK_TOKEN for anything beyond local testing.
 docker compose up -d
 ```
 
@@ -26,26 +38,52 @@ export QUACK_PORT=9494
 ./scripts/smoke-test
 ```
 
-The RustFS S3 API is at <http://localhost:9000>; its console is at <http://localhost:9001>. Quack listens at `localhost:9494`.
+The local RustFS S3 API is at <http://localhost:9000>; its console is at <http://localhost:9001>. Quack listens at `localhost:9494`, and the Ducan API at `localhost:8080`. RustFS is for local testing only.
 
 ## How it works
 
 ```text
-local duckdb CLI --Quack/HTTP--> duckdb-server --DuckLake/S3--> RustFS
+local duckdb CLI --Quack/HTTP--> duckdb-server --DuckLake/S3--> S3-compatible storage
+                                      (RustFS locally; external S3 in production)
                                       |
                                       +-- /catalog/db.duckdb
 ```
 
-`compose.yaml` starts four services in dependency order:
+`compose.yaml` starts five services in dependency order:
 
 1. `rustfs-perms` prepares the RustFS volume permissions and exits.
 2. `rustfs` provides S3-compatible object storage for Parquet files.
 3. `bucket-init` waits for RustFS and creates the `lakehouse` bucket if needed, then exits.
 4. `duckdb-server` is the only process that opens the DuckLake catalog and serves Quack on port `9494`.
+5. `api` provides the authenticated Ducan API on port `8080` and stores control-plane state separately.
 
 The local DuckDB CLI connects to `127.0.0.1:9494` through Quack. It does not open `/catalog/db.duckdb` or mount RustFS data. Inside the Compose network, DuckDB reaches RustFS at `http://rustfs:9000`; the catalog is persisted in `duckdb-catalog`, while Parquet data is persisted in `rustfs-data`.
 
 `rustfs-perms` and `bucket-init` are one-shot setup services, so their `Exited` status is expected. `rustfs` and `duckdb-server` should remain running.
+
+## Production storage
+
+Use an external S3-compatible service—AWS S3, Cloudflare R2, MinIO, or another provider—in real deployments. RustFS is included only for local testing:
+
+```bash
+cp .env.production.example .env.production
+docker compose --env-file .env.production -f compose.production.yaml up -d --build
+```
+
+Set `S3_BUCKET` and `DUCKDB_SECRETS` in `.env.production`. Each semicolon-separated secret body becomes a named DuckDB secret. The production Compose file does not start RustFS or the bucket bootstrap container.
+
+## Register a source and ingest
+
+The first platform workflow imports a PostgreSQL table into `lake.raw`:
+
+```bash
+uv run bin/ducan source add postgres \
+  --name sales --host localhost --database sales --username ducan_reader
+uv run bin/ducan ingest --source sales --schema public --table orders --wait
+uv run bin/ducan jobs
+```
+
+Passwords are prompted for and stored outside the control database with restrictive file permissions.
 
 ## Validate
 

@@ -1,0 +1,175 @@
+#!/usr/bin/env -S uv run --script
+"""Ducan's dependency-free local appliance CLI."""
+from __future__ import annotations
+
+import argparse
+import getpass
+import json
+import os
+import secrets
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+ENV_FILE = ROOT / ".env"
+ENV_EXAMPLE = ROOT / ".env.example"
+
+
+def read_env() -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not ENV_FILE.exists():
+        return values
+    for line in ENV_FILE.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key] = value.strip().strip('"').strip("'")
+    return values
+
+
+def setting(name: str, default: str) -> str:
+    return os.environ.get(name) or read_env().get(name) or default
+
+
+def api_request(method: str, path: str, payload: dict | None = None) -> object:
+    port = setting("DUCAN_API_PORT", "8080")
+    token = setting("DUCAN_API_TOKEN", "local-ducan-token")
+    data = None if payload is None else json.dumps(payload).encode()
+    request = urllib.request.Request(f"http://127.0.0.1:{port}{path}", data=data, method=method)
+    request.add_header("Authorization", f"Bearer {token}")
+    if data:
+        request.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        message = exc.read().decode(errors="replace")
+        print(message, file=sys.stderr)
+        raise SystemExit(1) from exc
+    except urllib.error.URLError as exc:
+        print(f"Ducan API is unavailable: {exc.reason}", file=sys.stderr)
+        raise SystemExit(1) from exc
+
+
+def compose(*args: str) -> None:
+    subprocess.run(["docker", "compose", *args], cwd=ROOT, check=True)
+
+
+def init() -> None:
+    if ENV_FILE.exists():
+        print(f"already exists: {ENV_FILE}")
+        return
+    values = ENV_EXAMPLE.read_text()
+    values = values.replace("RUSTFS_SECRET_KEY=change-me-before-sharing", f"RUSTFS_SECRET_KEY={secrets.token_urlsafe(24)}")
+    values = values.replace("QUACK_TOKEN=change-me-quack-token", f"QUACK_TOKEN={secrets.token_urlsafe(24)}")
+    if "DUCAN_API_TOKEN=" not in values:
+        values += f"\nDUCAN_API_TOKEN={secrets.token_urlsafe(24)}\nDUCAN_API_PORT=8080\n"
+    else:
+        values = values.replace("DUCAN_API_TOKEN=change-me-ducan-token", f"DUCAN_API_TOKEN={secrets.token_urlsafe(24)}")
+    ENV_FILE.write_text(values)
+    os.chmod(ENV_FILE, 0o600)
+    print(f"created {ENV_FILE}; review it before starting Ducan")
+
+
+def source_add(args: argparse.Namespace) -> None:
+    password = getpass.getpass("PostgreSQL password: ")
+    result = api_request(
+        "POST",
+        "/v1/sources",
+        {
+            "type": "postgres",
+            "name": args.name,
+            "host": args.host,
+            "port": args.port,
+            "database": args.database,
+            "username": args.username,
+            "password": password,
+        },
+    )
+    print(json.dumps(result, indent=2))
+
+
+def ingest(args: argparse.Namespace) -> None:
+    result = api_request(
+        "POST",
+        "/v1/ingestions",
+        {
+            "source": args.source,
+            "schema": args.schema,
+            "table": args.table,
+            "target": args.target or args.table,
+            "mode": "replace",
+        },
+    )
+    print(json.dumps(result, indent=2))
+    if not args.wait:
+        return
+    job_id = result["id"]
+    while True:
+        job = api_request("GET", f"/v1/jobs/{job_id}")
+        print(json.dumps(job, indent=2))
+        if job["status"] in {"succeeded", "failed"}:
+            raise SystemExit(0 if job["status"] == "succeeded" else 1)
+        time.sleep(2)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="ducan")
+    sub = parser.add_subparsers(dest="command", required=True)
+    sub.add_parser("init", help="create a local .env with generated secrets")
+    sub.add_parser("up", help="start Ducan")
+    down = sub.add_parser("down", help="stop Ducan")
+    down.add_argument("--volumes", action="store_true", help="also delete persistent data")
+    sub.add_parser("status", help="show service and API status")
+
+    source = sub.add_parser("source", help="manage data sources")
+    source_sub = source.add_subparsers(dest="source_command", required=True)
+    add = source_sub.add_parser("add", help="register a PostgreSQL source")
+    add.add_argument("type", choices=["postgres"])
+    add.add_argument("--name", required=True)
+    add.add_argument("--host", required=True)
+    add.add_argument("--port", type=int, default=5432)
+    add.add_argument("--database", required=True)
+    add.add_argument("--username", required=True)
+    source_sub.add_parser("list")
+
+    load = sub.add_parser("ingest", help="copy a PostgreSQL table into lake.raw")
+    load.add_argument("--source", required=True)
+    load.add_argument("--schema", default="public")
+    load.add_argument("--table", required=True)
+    load.add_argument("--target")
+    load.add_argument("--wait", action="store_true")
+    sub.add_parser("jobs", help="list ingestion jobs")
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+    if args.command == "init":
+        return init()
+    if args.command == "up":
+        return compose("up", "-d")
+    if args.command == "down":
+        return compose("down", *( ["-v"] if args.volumes else [] ))
+    if args.command == "status":
+        compose("ps")
+        print(json.dumps(api_request("GET", "/readyz"), indent=2))
+        return
+    if args.command == "source":
+        if args.source_command == "add":
+            return source_add(args)
+        print(json.dumps(api_request("GET", "/v1/sources"), indent=2))
+        return
+    if args.command == "ingest":
+        return ingest(args)
+    if args.command == "jobs":
+        print(json.dumps(api_request("GET", "/v1/jobs"), indent=2))
+
+
+if __name__ == "__main__":
+    main()

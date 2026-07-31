@@ -18,8 +18,8 @@ services:
       RUSTFS_ADDRESS: :9000
       RUSTFS_CONSOLE_ENABLE: "true"
     ports:
-      - "${RUSTFS_API_PORT:-9000}:9000"
-      - "${RUSTFS_CONSOLE_PORT:-9001}:9001"
+      - "${RUSTFS_BIND_ADDRESS:-127.0.0.1}:${RUSTFS_API_PORT:-9000}:9000"
+      - "${RUSTFS_BIND_ADDRESS:-127.0.0.1}:${RUSTFS_CONSOLE_PORT:-9001}:9001"
     volumes:
       - rustfs-data:/data
 
@@ -33,7 +33,7 @@ services:
       AWS_SECRET_ACCESS_KEY: ${RUSTFS_SECRET_KEY:-ducklake_secret}
       AWS_DEFAULT_REGION: ${RUSTFS_REGION:-us-east-1}
       AWS_EC2_METADATA_DISABLED: "true"
-      LAKEHOUSE_BUCKET: ${LAKEHOUSE_BUCKET:-lakehouse}
+      LAKEHOUSE_BUCKET: ${S3_BUCKET:-${LAKEHOUSE_BUCKET:-lakehouse}}
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -60,17 +60,41 @@ services:
     entrypoint: ["/usr/local/bin/server-entrypoint"]
     environment:
       DUCKDB_CATALOG_PATH: /catalog/db.duckdb
-      DUCKLAKE_DATA_PATH: s3://${LAKEHOUSE_BUCKET:-lakehouse}/data/
-      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY:-ducklake_access}
-      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY:-ducklake_secret}
-      RUSTFS_REGION: ${RUSTFS_REGION:-us-east-1}
-      RUSTFS_ENDPOINT: ${RUSTFS_ENDPOINT:-rustfs:9000}
+      DUCKLAKE_DATA_PATH: s3://${S3_BUCKET:-${LAKEHOUSE_BUCKET:-lakehouse}}/data/
+      DUCKDB_SECRETS: "${DUCKDB_SECRETS:-TYPE s3, KEY_ID 'ducklake_access', SECRET 'ducklake_secret', REGION 'us-east-1', ENDPOINT 'rustfs:9000', USE_SSL false, URL_STYLE 'path'}"
       QUACK_TOKEN: ${QUACK_TOKEN:-local-quack-token}
     ports:
-      - "${QUACK_PORT:-9494}:9494"
+      - "${QUACK_BIND_ADDRESS:-127.0.0.1}:${QUACK_PORT:-9494}:9494"
     volumes:
       - duckdb-catalog:/catalog
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+      args:
+        DUCKDB_IMAGE: ${DUCKDB_IMAGE:-duckdb/duckdb:1.5.3}
+    depends_on:
+      duckdb-server:
+        condition: service_started
+    environment:
+      DUCAN_CONTROL_DB: /var/lib/ducan/control.db
+      DUCAN_SECRET_DIR: /var/lib/ducan/secrets
+      DUCAN_QUACK_URL: quack:duckdb-server:9494
+      DUCAN_API_TOKEN: ${DUCAN_API_TOKEN:-local-ducan-token}
+      QUACK_TOKEN: ${QUACK_TOKEN:-local-quack-token}
+      DUCAN_API_INTERNAL_PORT: 8080
+    ports:
+      - "${DUCAN_BIND_ADDRESS:-127.0.0.1}:${DUCAN_API_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - ducan-control:/var/lib/ducan
 
 volumes:
   rustfs-data:
   duckdb-catalog:
+  ducan-control:

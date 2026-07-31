@@ -5,9 +5,12 @@
 From the repository root:
 
 ```bash
-cp .env.example .env
-docker compose up -d
+uv run bin/ducan init
+uv run bin/ducan up
+uv run bin/ducan status
 ```
+
+The CLI uses uv for the Python toolchain and Docker Compose for the services. Direct Compose usage remains supported with `cp .env.example .env && docker compose up -d`.
 
 Compose starts the stack in this order:
 
@@ -15,7 +18,8 @@ Compose starts the stack in this order:
 2. `rustfs` starts the single-node object store.
 3. `bucket-init` polls `s3api list-buckets`, then creates `LAKEHOUSE_BUCKET` if `head-bucket` cannot find it.
 4. `duckdb-server` builds/starts after bucket initialization succeeds and attaches the catalog to RustFS.
-5. The host DuckDB CLI connects to the published Quack port; it is not a Compose service.
+5. `api` starts the Ducan control plane and stores source/job metadata before sending ingestion SQL through Quack.
+6. The host DuckDB CLI connects to the published Quack port; it is not a Compose service.
 
 Bucket creation is safe to repeat. The server entrypoint is not a migration runner: it installs extensions and attaches the existing catalog on every start.
 
@@ -49,6 +53,19 @@ Defaults are 1,000,000 rows, batches of 100,000, and no periodic checkpoint. Opt
 - `random() * 100` as the amount.
 
 `--checkpoint-every N` sends `CHECKPOINT` after every N committed batches, then the script queries the final `count()`. Because data inlining is disabled, this exercises Parquet-backed ingestion rather than catalog-only rows.
+
+## PostgreSQL ingestion
+
+Register a source and replace a `lake.raw` table through the Ducan API:
+
+```bash
+uv run bin/ducan source add postgres \
+  --name sales --host localhost --database sales --username ducan_reader
+uv run bin/ducan ingest --source sales --schema public --table orders --wait
+uv run bin/ducan jobs
+```
+
+Milestone 1 supports replace-mode imports only. Passwords are prompted for and kept outside the control database.
 
 ## Ad-hoc queries
 

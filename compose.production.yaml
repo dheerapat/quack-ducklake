@@ -1,0 +1,49 @@
+# Production-shaped deployment. The object store and S3 credentials are external.
+# Start with: docker compose -f compose.production.yaml up -d --build
+services:
+  duckdb-server:
+    build:
+      context: .
+      dockerfile: docker/duckdb/Dockerfile
+      args:
+        DUCKDB_IMAGE: ${DUCKDB_IMAGE:-duckdb/duckdb:1.5.3}
+    restart: unless-stopped
+    entrypoint: ["/usr/local/bin/server-entrypoint"]
+    environment:
+      DUCKDB_CATALOG_PATH: /catalog/db.duckdb
+      DUCKLAKE_DATA_PATH: s3://${S3_BUCKET:?set S3_BUCKET}/data/
+      DUCKDB_SECRETS: ${DUCKDB_SECRETS:?set DUCKDB_SECRETS}
+      QUACK_TOKEN: ${QUACK_TOKEN:?set QUACK_TOKEN}
+    volumes:
+      - duckdb-catalog:/catalog
+
+  api:
+    build:
+      context: .
+      dockerfile: api/Dockerfile
+      args:
+        DUCKDB_IMAGE: ${DUCKDB_IMAGE:-duckdb/duckdb:1.5.3}
+    restart: unless-stopped
+    depends_on:
+      duckdb-server:
+        condition: service_started
+    environment:
+      DUCAN_CONTROL_DB: /var/lib/ducan/control.db
+      DUCAN_SECRET_DIR: /var/lib/ducan/secrets
+      DUCAN_QUACK_URL: quack:duckdb-server:9494
+      DUCAN_API_TOKEN: ${DUCAN_API_TOKEN:?set DUCAN_API_TOKEN}
+      QUACK_TOKEN: ${QUACK_TOKEN:?set QUACK_TOKEN}
+      DUCAN_API_INTERNAL_PORT: 8080
+    ports:
+      - "${DUCAN_BIND_ADDRESS:-127.0.0.1}:${DUCAN_API_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz')"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    volumes:
+      - ducan-control:/var/lib/ducan
+
+volumes:
+  duckdb-catalog:
+  ducan-control:

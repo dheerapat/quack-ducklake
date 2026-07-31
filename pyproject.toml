@@ -1,0 +1,9 @@
+[project]
+name = "ducan"
+version = "0.1.0"
+description = "A small-business DuckLake lakehouse appliance"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv]
+package = false
