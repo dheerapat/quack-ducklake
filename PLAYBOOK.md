@@ -75,9 +75,9 @@ The first sale should be a small, defined pilot:
 
 Read these files before changing the repository:
 
-- `openwiki/quickstart.md` — startup and validation.
-- `openwiki/architecture.md` — service ownership and storage boundaries.
-- `openwiki/workflows.md` — smoke testing and load generation.
+- `wiki/quickstart.md` — startup and validation.
+- `wiki/architecture.md` — service ownership and storage boundaries.
+- `wiki/workflows.md` — smoke testing and load generation.
 - `compose.yaml` — current local infrastructure.
 - `docker/duckdb/server-entrypoint` — DuckDB, DuckLake, S3, and Quack bootstrap.
 - `scripts/smoke-test` — end-to-end persistence check.
@@ -428,9 +428,9 @@ Owns:
 Must read:
 
 - `AGENTS.md`
-- `openwiki/quickstart.md`
-- `openwiki/architecture.md`
-- `openwiki/workflows.md`
+- `wiki/quickstart.md`
+- `wiki/architecture.md`
+- `wiki/workflows.md`
 - `PLAYBOOK.md`
 
 ### Agent 2 — Product and customer
@@ -515,7 +515,7 @@ Rollback or failure plan:
 
 Agents must:
 
-1. Read the relevant OpenWiki documentation first.
+1. Read the relevant wiki documentation first.
 2. Inspect existing code before proposing new abstractions.
 3. Make the smallest change that satisfies the task.
 4. Avoid adding dependencies without a specific need.

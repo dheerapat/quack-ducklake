@@ -1,4 +1,4 @@
-# OpenWiki quickstart
+# Wiki quickstart
 
 This repository is a local Docker Compose simulation of a small-business DuckLake lakehouse:
 
