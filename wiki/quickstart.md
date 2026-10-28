@@ -18,6 +18,7 @@ DuckDB client --Quack/HTTP--> duckdb-server --DuckLake/S3--> RustFS
 ## Prerequisites
 
 - Docker with Docker Compose.
+- [uv](https://docs.astral.sh/uv/) to run the repository Python scripts. They use only the Python standard library.
 - Network access to pull the configured images on the first run.
 - DuckDB 2.0.0 or newer for the optional local CLI. DuckDB 2.0.0 LTS includes the polished Quack protocol and the `CONNECT` statement for routing a client session to a remote database.
 
@@ -42,7 +43,7 @@ The default internal data path is `s3://lakehouse/data/`; the catalog is persist
 Run the smoke test from the repository root:
 
 ```bash
-scripts/smoke-test
+uv run scripts/smoke-test.py
 ```
 
 It waits for Quack, creates `lake.events`, inserts two rows, checks that RustFS contains a Parquet object, restarts `duckdb-server`, and checks the row count again.
@@ -50,8 +51,8 @@ It waits for Quack, creates `lake.events`, inserts two rows, checks that RustFS 
 For larger server-side batches:
 
 ```bash
-scripts/generate-load --rows 1000000 --batch-size 100000
-scripts/generate-load --rows 10000000 --batch-size 250000 --checkpoint-every 10
+uv run scripts/generate-load.py --rows 1000000 --batch-size 100000
+uv run scripts/generate-load.py --rows 10000000 --batch-size 250000 --checkpoint-every 10
 ```
 
 The generator commits each batch through Quack and can issue `CHECKPOINT` after every N batches. See [workflows](workflows.md) for option validation and data assumptions.

@@ -2,3 +2,5 @@
 .DS_Store
 *.log
 .catalog/
+__pycache__/
+*.py[cod]

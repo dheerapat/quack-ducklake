@@ -22,7 +22,7 @@ Bucket creation is safe to repeat. The server entrypoint is not a migration runn
 ## Smoke test
 
 ```bash
-scripts/smoke-test
+uv run scripts/smoke-test.py
 ```
 
 The script changes to the repository root, uses the host `duckdb` CLI (or `DUCKDB_BIN`), and performs this sequence:
@@ -33,15 +33,15 @@ The script changes to the repository root, uses the host `duckdb` CLI (or `DUCKD
 4. Lists the configured bucket recursively through AWS CLI and requires a `.parquet` object.
 5. Restarts `duckdb-server`, waits three seconds, polls Quack again, and queries the persisted row count.
 
-The script reads `QUACK_TOKEN` from the environment, defaulting to `local-quack-token`, and applies the same printable-ASCII/quote restrictions needed by the server SQL call.
+The Python script reads `QUACK_TOKEN` from the environment, defaulting to `local-quack-token`, and applies the same printable-ASCII/quote restrictions needed by the server SQL call.
 
 ## Generate load
 
 ```bash
-scripts/generate-load [--rows N] [--batch-size N] [--checkpoint-every N]
+uv run scripts/generate-load.py [--rows N] [--batch-size N] [--checkpoint-every N]
 ```
 
-Defaults are 1,000,000 rows, batches of 100,000, and no periodic checkpoint. Options must be non-negative integers; `--rows` and `--batch-size` must be positive. The script starts only the server-side Compose services, then uses the host `duckdb` CLI (DuckDB 2.0.0 or newer) as one client process. Each batch runs a `BEGIN`/`INSERT`/`COMMIT` transaction through the connected Quack session. Rows use:
+Defaults are 1,000,000 rows, batches of 100,000, and no periodic checkpoint. Options must be non-negative integers; `--rows` and `--batch-size` must be positive. The Python script starts only the server-side Compose services, then uses the host `duckdb` CLI (DuckDB 2.0.0 or newer) as one client process. Each batch runs a `BEGIN`/`INSERT`/`COMMIT` transaction through the connected Quack session. Rows use:
 
 - `i` as the ID,
 - a timestamp beginning at `2026-01-01 00:00:00` plus `i` seconds,
@@ -66,7 +66,7 @@ Use the token from `.env` when it differs from the example. The server allows ot
 To verify persistence without deleting data:
 
 ```bash
-scripts/smoke-test
+uv run scripts/smoke-test.py
 docker compose restart duckdb-server
 ```
 
@@ -87,7 +87,7 @@ docker compose down -v
 - Change service topology, ports, volumes, startup dependencies, or defaults in `compose.yaml` and mirror operator-facing values in `.env.example`.
 - Change catalog/S3/Quack bootstrap behavior in `docker/duckdb/server-entrypoint`; preserve its validation and single-process lifetime.
 - Change reproducible server image assembly in `docker/duckdb/Dockerfile`.
-- Change test data or persistence assertions in `scripts/smoke-test`.
-- Change workload size, batch, or checkpoint behavior in `scripts/generate-load`.
+- Change test data or persistence assertions in `scripts/smoke-test.py`.
+- Change workload size, batch, or checkpoint behavior in `scripts/generate-load.py`.
 
-No unit-test suite or CI configuration is present in the repository. The smoke test is the checked-in end-to-end validation path; shell syntax can be checked with `sh -n` before running Docker-based tests. `generate-load` requires a host DuckDB CLI with Quack support; set `DUCKDB_BIN` to override the `duckdb` executable.
+No unit-test suite or CI configuration is present in the repository. The smoke test is the checked-in end-to-end validation path; validate Python syntax with `uv run python -m py_compile scripts/*.py` before running Docker-based tests. `generate-load.py` requires a host DuckDB CLI with Quack support; set `DUCKDB_BIN` to override the `duckdb` executable.

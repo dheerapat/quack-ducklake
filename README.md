@@ -10,6 +10,8 @@ The server image defaults to DuckDB 2.0.0 LTS. Host clients use the 2.0 `ATTACH`
 
 ## Start
 
+Prerequisites: Docker Compose, [uv](https://docs.astral.sh/uv/) for the helper scripts, and DuckDB CLI 2.0.0+ for host-side Quack queries. The helper scripts use only the Python standard library.
+
 ```bash
 cp .env.example .env
 # Change RUSTFS_SECRET_KEY and QUACK_TOKEN for anything beyond local testing.
@@ -23,7 +25,7 @@ The local scripts read shell environment variables rather than sourcing `.env`. 
 ```bash
 export QUACK_TOKEN=change-me-quack-token
 export QUACK_PORT=9494
-./scripts/smoke-test
+uv run scripts/smoke-test.py
 ```
 
 The RustFS S3 API is at <http://localhost:9000>; its console is at <http://localhost:9001>. Quack listens at `localhost:9494`.
@@ -52,17 +54,17 @@ The local DuckDB 2.0.0+ CLI attaches to `127.0.0.1:9494` through Quack and uses 
 Run the smoke test. It creates `lake.events`, inserts two rows, verifies a Parquet object in RustFS, restarts DuckDB, and checks the row count again:
 
 ```bash
-scripts/smoke-test
+uv run scripts/smoke-test.py
 ```
 
 Generate server-side batches through one local DuckDB client process. The generator defaults to 1M rows:
 
 ```bash
-scripts/generate-load --rows 1000000 --batch-size 100000
-scripts/generate-load --rows 10000000 --batch-size 250000 --checkpoint-every 10
+uv run scripts/generate-load.py --rows 1000000 --batch-size 100000
+uv run scripts/generate-load.py --rows 10000000 --batch-size 250000 --checkpoint-every 10
 ```
 
-Run `scripts/smoke-test` first on a fresh stack so it creates `lake.events`; `generate-load` uses the host `duckdb` CLI (2.0.0 or newer) to route requests through Quack with `CONNECT` and inserts into that existing table.
+Run `uv run scripts/smoke-test.py` first on a fresh stack so it creates `lake.events`; `generate-load` uses the host `duckdb` CLI (2.0.0 or newer) to route requests through Quack with `CONNECT` and inserts into that existing table.
 
 `DATA_INLINING_ROW_LIMIT` is set to `0`, so inserts go to Parquet rather than DuckLake catalog inlining.
 
@@ -85,7 +87,7 @@ docker compose down                  # keep catalog and object data
 docker compose down -v               # delete the simulation data
 ```
 
-The `-v` form permanently removes both the DuckLake catalog and RustFS Parquet data. After a reset, run `./scripts/smoke-test` to recreate `lake.events` and validate the fresh stack.
+The `-v` form permanently removes both the DuckLake catalog and RustFS Parquet data. After a reset, run `uv run scripts/smoke-test.py` to recreate `lake.events` and validate the fresh stack.
 
 ## Caveats
 
