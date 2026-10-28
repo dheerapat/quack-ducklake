@@ -15,7 +15,7 @@ Compose starts the stack in this order:
 2. `rustfs` starts the single-node object store.
 3. `bucket-init` polls `s3api list-buckets`, then creates `LAKEHOUSE_BUCKET` if `head-bucket` cannot find it.
 4. `duckdb-server` builds/starts after bucket initialization succeeds and attaches the catalog to RustFS.
-5. The host DuckDB CLI connects to the published Quack port; it is not a Compose service.
+5. The host DuckDB 2.0.0+ CLI attaches to the published Quack endpoint and uses `CONNECT` to route queries; it is not a Compose service.
 
 Bucket creation is safe to repeat. The server entrypoint is not a migration runner: it installs extensions and attaches the existing catalog on every start.
 
@@ -41,7 +41,7 @@ The script reads `QUACK_TOKEN` from the environment, defaulting to `local-quack-
 scripts/generate-load [--rows N] [--batch-size N] [--checkpoint-every N]
 ```
 
-Defaults are 1,000,000 rows, batches of 100,000, and no periodic checkpoint. Options must be non-negative integers; `--rows` and `--batch-size` must be positive. The script starts only the server-side Compose services, then uses the host `duckdb` CLI (DuckDB 1.5.3 or newer) as one client process. Each batch is one `BEGIN`/`INSERT`/`COMMIT` request sent through Quack. Rows use:
+Defaults are 1,000,000 rows, batches of 100,000, and no periodic checkpoint. Options must be non-negative integers; `--rows` and `--batch-size` must be positive. The script starts only the server-side Compose services, then uses the host `duckdb` CLI (DuckDB 2.0.0 or newer) as one client process. Each batch runs a `BEGIN`/`INSERT`/`COMMIT` transaction through the connected Quack session. Rows use:
 
 - `i` as the ID,
 - a timestamp beginning at `2026-01-01 00:00:00` plus `i` seconds,
@@ -52,14 +52,14 @@ Defaults are 1,000,000 rows, batches of 100,000, and no periodic checkpoint. Opt
 
 ## Ad-hoc queries
 
-Run the host DuckDB CLI and send SQL to the server with `quack_query`:
+Run the host DuckDB 2.0.0+ CLI, attach to Quack, and route the session with `CONNECT`:
 
 ```bash
 duckdb -c \
-  "INSTALL quack; LOAD quack; SELECT * FROM quack_query('quack:127.0.0.1:9494', 'SELECT count() FROM lake.events', token => 'local-quack-token', disable_ssl => true);"
+  "INSTALL quack; LOAD quack; ATTACH 'quack:127.0.0.1:9494' AS qk (TOKEN 'local-quack-token'); CONNECT qk; SELECT count() FROM lake.events;"
 ```
 
-Use the token from `.env` when it differs from the example. The server allows other hostnames and disables SSL because this is an internal local simulation; do not treat that configuration as a production security model.
+Use the token from `.env` when it differs from the example. The server allows other hostnames and disables SSL because this is an internal local simulation; DuckDB documents this direct exposure mode as testing-only. For deployments, bind Quack to localhost and use a TLS-terminating reverse proxy.
 
 ## Persistence and reset checks
 

@@ -28,6 +28,8 @@ The server entrypoint (`docker/duckdb/server-entrypoint`) runs one in-memory Duc
 5. Calls `quack_serve('quack:0.0.0.0:9494', ...)` with the configured token and disabled SSL.
 6. Keeps the same process alive with a FIFO and `tail -f`; this is important because the attached catalog and Quack listener belong to that process.
 
+The Compose demo binds Quack on `0.0.0.0` and allows other hostnames so the host client can connect through the published port. This is testing-only; use a localhost-bound server and TLS-terminating reverse proxy for deployment.
+
 The persistent catalog volume contains `/catalog/db.duckdb`. RustFS owns the Parquet data volume. The host DuckDB client only connects over Quack and does not open either volume, preserving the single-writer catalog boundary.
 
 ## Configuration contract
@@ -36,7 +38,7 @@ The persistent catalog volume contains `/catalog/db.duckdb`. RustFS owns the Par
 
 | Variable | Role | Default |
 | --- | --- | --- |
-| `DUCKDB_IMAGE` | source image for the DuckDB server binary | `duckdb/duckdb:1.5.3` |
+| `DUCKDB_IMAGE` | source image for the DuckDB server binary | `duckdb/duckdb:2.0.0` |
 | `RUSTFS_IMAGE` | object-store image | `rustfs/rustfs:latest` |
 | `AWS_CLI_IMAGE` | bucket bootstrap image | `amazon/aws-cli:2.36.8` |
 | `RUSTFS_ACCESS_KEY`, `RUSTFS_SECRET_KEY` | S3 credentials | `ducklake_access`, `ducklake_secret` |

@@ -6,7 +6,7 @@ DuckDB client --Quack/HTTP--> DuckDB server --DuckLake/S3--> RustFS
                                   +-- /catalog/db.duckdb
 ```
 
-The client never mounts the catalog or RustFS data. Only the single `duckdb-server` process opens the catalog.
+The server image defaults to DuckDB 2.0.0 LTS. Host clients use the 2.0 `ATTACH` + `CONNECT` workflow over the polished Quack protocol. The client never mounts the catalog or RustFS data; only the single `duckdb-server` process opens the catalog.
 
 ## Start
 
@@ -43,7 +43,7 @@ local duckdb CLI --Quack/HTTP--> duckdb-server --DuckLake/S3--> RustFS
 3. `bucket-init` waits for RustFS and creates the `lakehouse` bucket if needed, then exits.
 4. `duckdb-server` is the only process that opens the DuckLake catalog and serves Quack on port `9494`.
 
-The local DuckDB CLI connects to `127.0.0.1:9494` through Quack. It does not open `/catalog/db.duckdb` or mount RustFS data. Inside the Compose network, DuckDB reaches RustFS at `http://rustfs:9000`; the catalog is persisted in `duckdb-catalog`, while Parquet data is persisted in `rustfs-data`.
+The local DuckDB 2.0.0+ CLI attaches to `127.0.0.1:9494` through Quack and uses `CONNECT` to route queries to the server. It does not open `/catalog/db.duckdb` or mount RustFS data. Inside the Compose network, DuckDB reaches RustFS at `http://rustfs:9000`; the catalog is persisted in `duckdb-catalog`, while Parquet data is persisted in `rustfs-data`.
 
 `rustfs-perms` and `bucket-init` are one-shot setup services, so their `Exited` status is expected. `rustfs` and `duckdb-server` should remain running.
 
@@ -62,7 +62,7 @@ scripts/generate-load --rows 1000000 --batch-size 100000
 scripts/generate-load --rows 10000000 --batch-size 250000 --checkpoint-every 10
 ```
 
-Run `scripts/smoke-test` first on a fresh stack so it creates `lake.events`; `generate-load` uses the host `duckdb` CLI (1.5.3 or newer) to send requests through Quack and inserts into that existing table.
+Run `scripts/smoke-test` first on a fresh stack so it creates `lake.events`; `generate-load` uses the host `duckdb` CLI (2.0.0 or newer) to route requests through Quack with `CONNECT` and inserts into that existing table.
 
 `DATA_INLINING_ROW_LIMIT` is set to `0`, so inserts go to Parquet rather than DuckLake catalog inlining.
 
@@ -72,10 +72,10 @@ The smoke test and load generator use the host `duckdb` executable. `generate-lo
 
 ```bash
 duckdb -c \
-  "INSTALL quack; LOAD quack; SELECT * FROM quack_query('quack:127.0.0.1:9494', 'SELECT count() FROM lake.events', token => 'local-quack-token', disable_ssl => true);"
+  "INSTALL quack; LOAD quack; ATTACH 'quack:127.0.0.1:9494' AS qk (TOKEN 'local-quack-token'); CONNECT qk; SELECT count() FROM lake.events;"
 ```
 
-Use the host DuckDB CLI version 1.5.3 or newer; Quack is a core extension starting with 1.5.3. Set `DUCKDB_BIN` if the executable is not named `duckdb` or is outside `PATH`.
+Use a host DuckDB CLI version 2.0.0 or newer. DuckDB 2.0.0 adds the `CONNECT` statement for session routing and ships a polished Quack protocol with performance and stability improvements. See the [DuckDB 2.0.0 announcement](https://duckdb.org/2026/10/21/announcing-duckdb-200) and [Quack documentation](https://duckdb.org/docs/2.0/quack/overview.html). Set `DUCKDB_BIN` if the executable is not named `duckdb` or is outside `PATH`.
 
 ## Stop/reset
 
@@ -89,7 +89,8 @@ The `-v` form permanently removes both the DuckLake catalog and RustFS Parquet d
 
 ## Caveats
 
-- Quack is beta and currently exposes the server's broad SQL surface.
+- DuckDB 2.0.0 ships a polished Quack protocol with performance and stability improvements. Quack still exposes the server's broad SQL surface, so protect the endpoint.
 - RustFS is single-node/single-disk here; it has no redundancy.
 - `/catalog/db.duckdb` is a single point of failure. Back it up in a real deployment.
+- Quack is exposed directly with `allow_other_hostname` and plain HTTP only for this local test simulation. The DuckDB 2.0.0 guidance recommends a localhost-bound server behind a TLS-terminating reverse proxy for deployments; do not expose this Compose endpoint to an untrusted network.
 - This intentionally omits observability, TLS, and multi-node RustFS from the initial simulation.

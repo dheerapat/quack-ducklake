@@ -19,7 +19,7 @@ DuckDB client --Quack/HTTP--> duckdb-server --DuckLake/S3--> RustFS
 
 - Docker with Docker Compose.
 - Network access to pull the configured images on the first run.
-- DuckDB 1.5.3 or newer for the optional local CLI; Quack is a core extension starting with 1.5.3.
+- DuckDB 2.0.0 or newer for the optional local CLI. DuckDB 2.0.0 LTS includes the polished Quack protocol and the `CONNECT` statement for routing a client session to a remote database.
 
 ## Start locally
 
@@ -60,7 +60,7 @@ The generator commits each batch through Quack and can issue `CHECKPOINT` after 
 
 ```bash
 duckdb -c \
-  "INSTALL quack; LOAD quack; SELECT * FROM quack_query('quack:127.0.0.1:9494', 'SELECT count() FROM lake.events', token => 'local-quack-token', disable_ssl => true);"
+  "INSTALL quack; LOAD quack; ATTACH 'quack:127.0.0.1:9494' AS qk (TOKEN 'local-quack-token'); CONNECT qk; SELECT count() FROM lake.events;"
 ```
 
 The example uses the default token. If `.env` overrides `QUACK_TOKEN`, substitute that value or use the repository scripts, which read it from the environment.
@@ -74,7 +74,8 @@ docker compose down -v # delete the named simulation volumes and data
 
 ## Important limits
 
-- Quack is beta and exposes the server's broad SQL surface.
+- DuckDB 2.0.0 ships a polished Quack protocol with performance and stability improvements. Quack still exposes the server's broad SQL surface, so protect the endpoint.
 - RustFS runs single-node/single-disk with no redundancy.
 - `/catalog/db.duckdb` is a single point of failure; back it up for any real deployment.
-- Internal and published traffic is HTTP in this simulation; TLS, observability, and multi-node RustFS are intentionally absent.
+- Quack is exposed directly with `allow_other_hostname` and plain HTTP only for this local test simulation. For deployments, follow DuckDB's [Quack security guidance](https://duckdb.org/docs/2.0/quack/setup/reverse_proxy.html) and put a TLS-terminating reverse proxy in front of a localhost-bound server.
+- TLS, observability, and multi-node RustFS are intentionally absent.

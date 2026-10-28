@@ -35,7 +35,7 @@ is_uint "$rows" && is_uint "$batch_size" && is_uint "$checkpoint_every" || {
 
 DUCKDB_BIN=${DUCKDB_BIN:-duckdb}
 command -v "$DUCKDB_BIN" >/dev/null 2>&1 || {
-  echo "DuckDB CLI not found: $DUCKDB_BIN (install DuckDB 1.5.3 or newer)" >&2
+  echo "DuckDB CLI not found: $DUCKDB_BIN (install DuckDB 2.0.0 or newer)" >&2
   exit 2
 }
 TOKEN=${QUACK_TOKEN:-local-quack-token}
@@ -55,7 +55,7 @@ query() {
   "$DUCKDB_BIN" -csv :memory: -c "$1"
 }
 wait_for_server() {
-  SQL="INSTALL quack; LOAD quack; SELECT * FROM quack_query('quack:127.0.0.1:${QUACK_PORT}', 'SELECT 42 AS ready', token => '${TOKEN}', disable_ssl => true);"
+  SQL="INSTALL quack; LOAD quack; ATTACH 'quack:127.0.0.1:${QUACK_PORT}' AS qk (TOKEN '${TOKEN}'); CONNECT qk; SELECT 42 AS ready;"
   for attempt in $(seq 1 30); do
     if output=$(query "$SQL" 2>/dev/null); then
       printf '%s\n' "$output"
@@ -76,22 +76,23 @@ cleanup() { rm -f "$sql_file"; }
 trap cleanup EXIT INT TERM
 {
   printf '%s\n' 'INSTALL quack; LOAD quack;'
+  printf "ATTACH 'quack:127.0.0.1:%s' AS qk (TOKEN '%s');\nCONNECT qk;\n" "$QUACK_PORT" "$TOKEN"
   start=0
   batch=0
   while [ "$start" -lt "$rows" ]; do
     end=$((start + batch_size))
     [ "$end" -le "$rows" ] || end=$rows
     count=$((end - start))
-    remote_sql="BEGIN; INSERT INTO lake.events SELECT i, TIMESTAMP ''2026-01-01 00:00:00'' + i * INTERVAL 1 SECOND, ''customer-'' || (i % 10000), random() * 100 FROM range(${start}, ${end}) AS r(i); COMMIT; SELECT ${count} AS inserted_rows"
-    printf "SELECT * FROM quack_query('quack:127.0.0.1:%s', '%s', token => '%s', disable_ssl => true);\n" "$QUACK_PORT" "$remote_sql" "$TOKEN"
+    remote_sql="BEGIN; INSERT INTO lake.events SELECT i, TIMESTAMP '2026-01-01 00:00:00' + i * INTERVAL 1 SECOND, 'customer-' || (i % 10000), random() * 100 FROM range(${start}, ${end}) AS r(i); COMMIT; SELECT ${count} AS inserted_rows"
+    printf '%s\n' "$remote_sql;"
     batch=$((batch + 1))
     start=$end
     if [ "$checkpoint_every" -gt 0 ] && [ $((batch % checkpoint_every)) -eq 0 ]; then
       remote_sql="CHECKPOINT; SELECT ${start} AS checkpointed_rows"
-      printf "SELECT * FROM quack_query('quack:127.0.0.1:%s', '%s', token => '%s', disable_ssl => true);\n" "$QUACK_PORT" "$remote_sql" "$TOKEN"
+      printf '%s\n' "$remote_sql;"
     fi
   done
-  printf "SELECT * FROM quack_query('quack:127.0.0.1:%s', 'SELECT count() AS total_rows FROM lake.events', token => '%s', disable_ssl => true);\n" "$QUACK_PORT" "$TOKEN"
+  printf '%s\n' 'SELECT count() AS total_rows FROM lake.events;'
 } >"$sql_file"
 
 "$DUCKDB_BIN" -csv :memory: <"$sql_file"

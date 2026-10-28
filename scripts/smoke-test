@@ -7,7 +7,7 @@ cd "$ROOT"
 compose() { docker compose "$@"; }
 DUCKDB_BIN=${DUCKDB_BIN:-duckdb}
 command -v "$DUCKDB_BIN" >/dev/null 2>&1 || {
-  echo "DuckDB CLI not found: $DUCKDB_BIN (install DuckDB 1.5.3 or newer)" >&2
+  echo "DuckDB CLI not found: $DUCKDB_BIN (install DuckDB 2.0.0 or newer)" >&2
   exit 2
 }
 query() {
@@ -23,7 +23,7 @@ if printf '%s' "$TOKEN" | LC_ALL=C grep -q '[^ -~]'; then
   exit 2
 fi
 wait_for_server() {
-  SQL="INSTALL quack; LOAD quack; SELECT * FROM quack_query('quack:127.0.0.1:${QUACK_PORT}', 'SELECT 42 AS ready', token => '${TOKEN}', disable_ssl => true);"
+  SQL="INSTALL quack; LOAD quack; ATTACH 'quack:127.0.0.1:${QUACK_PORT}' AS qk (TOKEN '${TOKEN}'); CONNECT qk; SELECT 42 AS ready;"
   for attempt in $(seq 1 30); do
     if output=$(query "$SQL" 2>/dev/null); then
       printf '%s\n' "$output"
@@ -42,7 +42,7 @@ compose up -d duckdb-server
 
 wait_for_server
 
-query "INSTALL quack; LOAD quack; SELECT * FROM quack_query('quack:127.0.0.1:${QUACK_PORT}', 'CREATE TABLE IF NOT EXISTS lake.events (id BIGINT, event_ts TIMESTAMP, customer VARCHAR, amount DOUBLE); INSERT INTO lake.events SELECT * FROM (VALUES (1, TIMESTAMP ''2026-01-01 00:00:00'', ''smoke'', 42.0), (2, TIMESTAMP ''2026-01-01 00:00:01'', ''smoke'', 7.5)) AS t(id, event_ts, customer, amount); SELECT count() AS rows FROM lake.events', token => '${TOKEN}', disable_ssl => true);"
+query "INSTALL quack; LOAD quack; ATTACH 'quack:127.0.0.1:${QUACK_PORT}' AS qk (TOKEN '${TOKEN}'); CONNECT qk; CREATE TABLE IF NOT EXISTS lake.events (id BIGINT, event_ts TIMESTAMP, customer VARCHAR, amount DOUBLE); INSERT INTO lake.events SELECT * FROM (VALUES (1, TIMESTAMP '2026-01-01 00:00:00', 'smoke', 42.0), (2, TIMESTAMP '2026-01-01 00:00:01', 'smoke', 7.5)) AS t(id, event_ts, customer, amount); SELECT count() AS rows FROM lake.events;"
 
 objects=$(compose run --rm --no-deps --entrypoint /bin/sh bucket-init -c 'aws --endpoint-url http://rustfs:9000 s3 ls "s3://$LAKEHOUSE_BUCKET" --recursive' 2>/dev/null || true)
 printf '%s\n' "$objects"
@@ -51,5 +51,5 @@ echo "$objects" | grep -q '\.parquet' || { echo 'Smoke test found no Parquet obj
 compose restart duckdb-server >/dev/null
 sleep 3
 wait_for_server
-query "INSTALL quack; LOAD quack; SELECT * FROM quack_query('quack:127.0.0.1:${QUACK_PORT}', 'SELECT count() AS rows FROM lake.events', token => '${TOKEN}', disable_ssl => true);"
+query "INSTALL quack; LOAD quack; ATTACH 'quack:127.0.0.1:${QUACK_PORT}' AS qk (TOKEN '${TOKEN}'); CONNECT qk; SELECT count() AS rows FROM lake.events;"
 echo 'smoke test passed'

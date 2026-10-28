@@ -1,4 +1,4 @@
-ARG DUCKDB_IMAGE=duckdb/duckdb:1.5.3
+ARG DUCKDB_IMAGE=duckdb/duckdb:2.0.0
 FROM ${DUCKDB_IMAGE} AS duckdb
 
 FROM debian:bookworm-slim
